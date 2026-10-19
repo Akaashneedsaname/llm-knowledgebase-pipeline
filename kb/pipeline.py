@@ -19,7 +19,7 @@ import operator
 import time
 from functools import wraps
 from pathlib import Path
-from typing import Annotated, Optional, TypedDict
+from typing import Annotated, Callable, Optional, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
@@ -191,9 +191,14 @@ def build_graph():
 _graph = None
 
 
-def ingest_file(path: Path, force: bool = False) -> dict:
+def ingest_file(path: Path, force: bool = False, on_stage: Callable[[str, float], None] = None) -> dict:
     """
     Run the pipeline on one file.
+
+    Args:
+        path: File to ingest
+        force: Re-ingest even if the file is already in the knowledgebase
+        on_stage: Optional callback(stage_name, seconds) after each stage, for progress UIs
 
     Returns:
         A run report for the file
@@ -201,7 +206,14 @@ def ingest_file(path: Path, force: bool = False) -> dict:
     global _graph
     _graph = _graph or build_graph()
 
-    state = _graph.invoke({"path": str(path), "force": force, "timings": {}, "warnings": []})
+    initial = {"path": str(path), "force": force, "timings": {}, "warnings": []}
+    state = initial
+    for mode, chunk in _graph.stream(initial, stream_mode=["updates", "values"]):
+        if mode == "values":
+            state = chunk
+        elif on_stage:
+            for node, update in chunk.items():
+                on_stage(node, (update or {}).get("timings", {}).get(node, 0.0))
 
     if state.get("skipped"):
         return {"file": path.name, "status": "skipped (already ingested)", "document_id": state["existing_id"]}

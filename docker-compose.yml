@@ -17,11 +17,31 @@ services:
 
   app:
     build: .
+    image: llm-knowledgebase-pipeline
     env_file:
       - path: .env
         required: false
     environment:
       DATABASE_URL: postgresql://kb:kb@db:5432/kb
+    volumes:
+      - ./samples:/app/samples
+      - ./output:/app/output
+      - model-cache:/cache
+    depends_on:
+      db:
+        condition: service_healthy
+
+  ui:
+    build: .
+    image: llm-knowledgebase-pipeline
+    command: ["streamlit", "run", "app/streamlit_app.py", "--server.port=8501", "--server.address=0.0.0.0"]
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: postgresql://kb:kb@db:5432/kb
+    ports:
+      - "8501:8501"
     volumes:
       - ./samples:/app/samples
       - ./output:/app/output

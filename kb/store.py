@@ -192,6 +192,14 @@ def iter_chunks_for_export():
             yield dict(row)
 
 
+def get_document(document_id: int) -> Optional[dict]:
+    """One document's full record, including its metadata JSON."""
+    with get_connection() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute("SELECT * FROM documents WHERE id = %s", (document_id,))
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
 def get_stats() -> list[dict]:
     """Per-document statistics."""
     with get_connection() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:

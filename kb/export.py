@@ -7,8 +7,30 @@ prep, evaluation sets, or loading into another vector store.
 
 import json
 from pathlib import Path
+from typing import Iterator
 
 from kb.store import iter_chunks_for_export
+
+
+def records() -> Iterator[dict]:
+    """Yield one export record per chunk, in document order."""
+    for row in iter_chunks_for_export():
+        yield {
+            "id": f"{row['document_id']}-{row['chunk_index']}",
+            "text": row["chunk_text"],
+            "source": row["source_file"],
+            "title": row["title"],
+            "author": row["author"],
+            "language": row["language"],
+            "chapter": row["chapter"],
+            "pages": [row["page_start"], row["page_end"]],
+            "tokens": row["token_count"],
+            "labels": row["labels"],
+        }
+
+
+def to_jsonl(rows) -> str:
+    return "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows)
 
 
 def export_jsonl(out_path: Path) -> int:
@@ -16,19 +38,7 @@ def export_jsonl(out_path: Path) -> int:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     count = 0
     with out_path.open("w", encoding="utf-8") as f:
-        for row in iter_chunks_for_export():
-            record = {
-                "id": f"{row['document_id']}-{row['chunk_index']}",
-                "text": row["chunk_text"],
-                "source": row["source_file"],
-                "title": row["title"],
-                "author": row["author"],
-                "language": row["language"],
-                "chapter": row["chapter"],
-                "pages": [row["page_start"], row["page_end"]],
-                "tokens": row["token_count"],
-                "labels": row["labels"],
-            }
+        for record in records():
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
             count += 1
     return count
