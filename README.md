@@ -8,7 +8,7 @@ It is orchestrated as a **LangGraph** state graph with per-stage timing and data
 
 > Adapted from the document-ingestion side of a production multi-source RAG system I built as an AI Engineer at US Farm Data, extended here with OCR, metadata extraction, dataset export and a web interface.
 
-![Ingest](docs/screenshots/ingest.png)
+![Matching passages shown as catalog cards](docs/screenshots/ask.png)
 
 ## Contents
 
@@ -36,17 +36,19 @@ docker compose up -d --build ui
 
 Open **http://localhost:8501**, then:
 
-1. Click **Generate samples** in the sidebar. It builds three test documents from a public-domain book (*The Time Machine*, H. G. Wells): a digital PDF, an image-only "scanned" PDF with skew and noise, and a scanned photo of a page.
-2. **Ingest** tab: click **Ingest sample documents**, or upload your own PDFs and images. Each file shows its pipeline stages live, then a report (pages, scanned pages, OCR confidence, chunks, tokens, seconds per stage, labels, warnings).
+1. Click **Create sample documents** in the sidebar. It builds three test documents from a public-domain book (*The Time Machine*, H. G. Wells): a digital PDF, an image-only "scanned" PDF with skew and noise, and a scanned photo of a page.
+2. **Add documents** tab: click **Add sample documents**, or upload your own PDFs and images. Each file shows its pipeline stages live, then a short report: pages, how many were scanned, OCR confidence, chunks, tokens, chapters, labels, where the time went, and any warnings.
 3. **Library** tab: everything in the knowledgebase, with chapters and labels per document. Documents can be removed here.
-4. **Search & Ask** tab: type a question. **Ask** returns an answer with numbered sources (chapter and page). **Search only** shows the matching passages in full.
-5. **Export** tab: download the whole knowledgebase as a JSONL dataset.
+4. **Ask** tab: type a question. **Ask** returns an answer with numbered sources (chapter and page). **Show matching passages** shows the passages in full.
+5. **Export** tab: **Build dataset**, then download the whole knowledgebase as a JSONL file.
 
-Stop it with `docker compose down`. Add `-v` to also delete the database.
+Stop it with `docker compose down`. Add `-v` to also delete the database. If ports 5433 or 8501 are taken, set `KB_DB_PORT` and `KB_UI_PORT` in `.env`.
 
-| Library | Search & Ask | Export |
+The interface is styled as an archive reading room. Retrieved passages are drawn as library catalog cards: ruled card stock, a red header rule, a typewritten citation. The styling lives in `app/theme.py`.
+
+| Add documents | Library | Export |
 |---|---|---|
-| ![Library](docs/screenshots/library.png) | ![Ask](docs/screenshots/ask.png) | ![Export](docs/screenshots/export.png) |
+| ![Add documents](docs/screenshots/add.png) | ![Library](docs/screenshots/library.png) | ![Export](docs/screenshots/export.png) |
 
 ## Quick start (command line)
 
@@ -146,7 +148,7 @@ The LLM is optional, and when it's on, usage is small and bounded:
 | Ingest | 1 per document (labels) | about 1,200 in, under 400 out, no matter how long the document is |
 | Ask | 1 per question | about 2,000-2,500 in (top 5 passages), under 600 out |
 | Ask, same question again | 0 (answer cache) | 0 |
-| Search only, chunking, OCR, local embeddings | 0 | 0 |
+| Show matching passages, chunking, OCR, local embeddings | 0 | 0 |
 
 - **Thinking disabled** on Flash models (`thinking_budget=0`). Labeling and cited answers don't need it, and thinking tokens are billed as output.
 - **Bounded input:** labeling sends a fixed-size excerpt (start, middle and end), so a 1,000-page book costs the same as a 10-page report. Answers send only the top-k retrieved passages.
@@ -271,7 +273,8 @@ Each line of the JSONL export is a self-contained record:
 
 ```
 app/
-  streamlit_app.py  web interface (Ingest, Library, Search & Ask, Export)
+  streamlit_app.py  web interface (Add documents, Library, Ask, Export)
+  theme.py          reading-room styling: palette, fonts, catalog cards
 kb/
   config.py         settings from environment variables
   extract.py        text layer + Tesseract OCR, paragraph rebuilding

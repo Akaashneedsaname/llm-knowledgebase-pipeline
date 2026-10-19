@@ -5,5 +5,13 @@ maxUploadSize = 500
 [browser]
 gatherUsageStats = false
 
+[client]
+toolbarMode = "minimal"
+
+# Archive reading-room palette (fonts are loaded in app/theme.py)
 [theme]
-primaryColor = "#2563eb"
+base = "light"
+primaryColor = "#1C2A42"
+backgroundColor = "#E6EBEF"
+secondaryBackgroundColor = "#EEF2F6"
+textColor = "#1C2A42"

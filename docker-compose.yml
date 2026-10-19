@@ -6,7 +6,7 @@ services:
       POSTGRES_PASSWORD: kb
       POSTGRES_DB: kb
     ports:
-      - "5433:5432"
+      - "${KB_DB_PORT:-5433}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -41,7 +41,7 @@ services:
     environment:
       DATABASE_URL: postgresql://kb:kb@db:5432/kb
     ports:
-      - "8501:8501"
+      - "${KB_UI_PORT:-8501}:8501"
     volumes:
       - ./samples:/app/samples
       - ./output:/app/output
