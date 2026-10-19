@@ -24,6 +24,8 @@ class Settings:
     # LLM (optional): used for document labeling and answer generation
     gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
     gemini_llm_model: str = os.getenv("GEMINI_LLM_MODEL", "gemini-2.5-flash")
+    llm_max_calls: int = int(os.getenv("LLM_MAX_CALLS", "200"))  # per running process; a safety cap
+    llm_label_chars: int = int(os.getenv("LLM_LABEL_CHARS", "4000"))  # excerpt sent for labeling
 
     # OCR
     ocr_min_chars: int = int(os.getenv("OCR_MIN_CHARS", "40"))  # below this, a PDF page is treated as scanned

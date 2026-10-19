@@ -12,6 +12,7 @@ from collections import Counter
 from typing import Optional
 
 from kb.clean import HEADING_RE, paragraphs
+from kb.config import settings
 from kb import llm
 
 STOPWORDS = set("""
@@ -90,6 +91,20 @@ def keyword_labels(text: str, n: int = 8) -> list[str]:
     return [w for w, _ in counts.most_common(n)]
 
 
+def _label_excerpt(text: str) -> str:
+    """
+    A small, representative excerpt for labeling: slices from the start,
+    middle and end of the document instead of the whole text, so labeling
+    costs the same small amount for a 5-page or a 500-page document.
+    """
+    budget = settings.llm_label_chars
+    if len(text) <= budget:
+        return text
+    part = budget // 3
+    mid = len(text) // 2
+    return "\n...\n".join([text[:part], text[mid - part // 2: mid + part // 2], text[-part:]])
+
+
 def llm_labels(text_sample: str) -> Optional[dict]:
     """
     Ask the LLM for a short structured label set for the document.
@@ -99,7 +114,7 @@ def llm_labels(text_sample: str) -> Optional[dict]:
     prompt = (
         "You are labeling documents for an LLM knowledgebase. Read the excerpt and return JSON with keys: "
         '"summary" (2 sentences), "topics" (3-8 short lowercase tags), "genre" (one or two words), '
-        '"language" (ISO 639-1 code).\n\nEXCERPT:\n' + text_sample[:6000]
+        '"language" (ISO 639-1 code).\n\nEXCERPT:\n' + _label_excerpt(text_sample)
     )
     result = llm.generate_json(prompt)
     if not isinstance(result, dict):

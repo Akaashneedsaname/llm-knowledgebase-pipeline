@@ -62,22 +62,38 @@ def ocr_image(image: Image.Image) -> tuple[str, float]:
         line["top"], line["bottom"] = min(line["top"], top), max(line["bottom"], bottom)
         confidences.append(conf)
 
-    ordered = list(lines.values())
-    if not ordered:
+    if not lines:
         return "", 0.0
 
-    heights = sorted(l["bottom"] - l["top"] for l in ordered)
+    text = join_lines([(l["top"], l["bottom"], " ".join(l["words"])) for l in lines.values()])
+    mean_conf = sum(confidences) / len(confidences)
+    return text, round(mean_conf, 1)
+
+
+def join_lines(lines: list[tuple[float, float, str]]) -> str:
+    """
+    Rebuild paragraphs from lines in reading order, given as (top, bottom, text).
+
+    A gap clearly larger than the page's typical gap between lines starts a
+    new paragraph, so single, 1.5 and double line spacing all work. Jumping
+    back up the page (a new column) also starts one.
+    """
+    if not lines:
+        return ""
+    heights = sorted(bottom - top for top, bottom, _ in lines)
     line_height = heights[len(heights) // 2] or 1
 
-    out = [" ".join(ordered[0]["words"])]
-    for prev, line in zip(ordered, ordered[1:]):
-        gap = line["top"] - prev["bottom"]
-        if gap > 0.8 * line_height or gap < -line_height:  # paragraph gap, or a new column
-            out.append("")
-        out.append(" ".join(line["words"]))
+    gaps = [top - prev_bottom for (_, prev_bottom, _), (top, _, _) in zip(lines, lines[1:])]
+    normal = sorted(g for g in gaps if g >= -line_height) or [0.0]
+    typical_gap = max(normal[(len(normal) - 1) // 2], 0.0)  # lower median
+    threshold = typical_gap + 0.5 * line_height
 
-    mean_conf = sum(confidences) / len(confidences)
-    return "\n".join(out).strip(), round(mean_conf, 1)
+    out = [lines[0][2]]
+    for gap, (_, _, text) in zip(gaps, lines[1:]):
+        if gap > threshold or gap < -line_height:
+            out.append("")
+        out.append(text)
+    return "\n".join(out).strip()
 
 
 def render_page(page: pymupdf.Page, dpi: int = None) -> Image.Image:
@@ -87,9 +103,21 @@ def render_page(page: pymupdf.Page, dpi: int = None) -> Image.Image:
 
 
 def _text_layer(page: pymupdf.Page) -> str:
-    """Read a page's text layer, one block per paragraph."""
-    blocks = page.get_text("blocks")
-    return "\n\n".join(b[4].strip() for b in blocks if b[6] == 0 and b[4].strip())
+    """
+    Read a page's text layer line by line and rebuild paragraphs from line spacing.
+
+    PDF "blocks" can't be trusted as paragraphs: many PDFs exported from Word
+    store every line as its own block.
+    """
+    lines = []
+    for block in page.get_text("dict")["blocks"]:
+        if block.get("type") != 0:  # skip images
+            continue
+        for line in block["lines"]:
+            text = "".join(span["text"] for span in line["spans"]).strip()
+            if text:
+                lines.append((line["bbox"][1], line["bbox"][3], text))
+    return join_lines(lines)
 
 
 def extract_pages(path: Path) -> tuple[list[Page], dict]:

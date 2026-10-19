@@ -123,7 +123,7 @@ Everything runs in Docker Compose as three services:
 | # | Stage | Module | What happens |
 |---|---|---|---|
 | 1 | **hash** | `pipeline.py` | SHA-256 of the file's bytes. If the same file was already ingested with the same embedding model, the run stops here ("skipped"). With *re-process* / `--force`, the old copy is deleted and the file runs again. |
-| 2 | **extract** | `extract.py` | **PDFs:** each page's text layer is read in blocks (paragraphs). If a page has fewer than 40 characters of text, it's treated as a scan: rendered to a 300 DPI grayscale image and OCR'd with Tesseract. **Images:** OCR'd directly. **Text files:** read as-is. For OCR, paragraphs are rebuilt from line geometry: a vertical gap larger than 0.8x the typical line height starts a new paragraph, because Tesseract's own paragraph guesses split sentences on scans. Mean word confidence is recorded per page, and pages under 60% raise a warning. |
+| 2 | **extract** | `extract.py` | **PDFs:** each page's text layer is read line by line. If a page has fewer than 40 characters of text, it's treated as a scan: rendered to a 300 DPI grayscale image and OCR'd with Tesseract. **Images:** OCR'd directly. **Text files:** read as-is. For both digital and scanned pages, paragraphs are rebuilt from line geometry: a gap clearly larger than the page's typical line gap (typical gap + half a line height) starts a new paragraph, which works for single, 1.5 and double spacing. Neither PDF "blocks" (often one per line in Word exports) nor Tesseract's paragraph guesses are reliable. Mean OCR word confidence is recorded per page, and pages under 60% raise a warning. |
 | 3 | **clean** | `clean.py` | **Headers/footers:** short lines in the top or bottom two lines of a page that repeat on at least half the pages (digits ignored, so "Page 3" and "Page 4" match) are removed. Chapter headings are protected. Also: bare page numbers and soft hyphens removed, words hyphenated across lines rejoined, curly quotes normalized, hard-wrapped lines unwrapped into paragraphs. |
 | 4 | **enrich** | `metadata.py` | **Title/author:** embedded PDF fields win; otherwise Project Gutenberg headers or the title page ("THE TIME MACHINE / An Invention / by H. G. Wells"). This uses the *raw* first page, because cleaning removes the running header that often holds the title. **Chapters:** headings like "Chapter IV: ...". **Labels:** with a Gemini key, the LLM returns a JSON summary, topics, genre and language; otherwise the top keywords by frequency (stopwords removed). |
 | 5 | **chunk** | `chunk.py` | Builds chunks from whole paragraphs up to 400 tokens (tiktoken `cl100k_base`), with 60 tokens of overlap carried into the next chunk. A chapter heading always starts a new chunk (no overlap across chapters). Sentences broken across a page break are rejoined first. Paragraphs bigger than a chunk are split on token boundaries. Every chunk records its first and last page and its chapter. |
@@ -136,6 +136,26 @@ Everything runs in Docker Compose as three services:
 2. pgvector finds the closest chunks by cosine distance (`ORDER BY embedding <=> query`), using an HNSW index.
 3. Each result is labeled with a citation built from its stored metadata: *title, chapter, page(s)*.
 4. **With a Gemini key**, the top passages are numbered and sent to the LLM with instructions to answer only from them and cite like [1]. **Without a key**, the most relevant passage is returned (extractive mode). The sources list is shown either way.
+
+## LLM cost controls
+
+The LLM is optional, and when it's on, usage is small and bounded:
+
+| Where | LLM calls | Approximate tokens |
+|---|---|---|
+| Ingest | 1 per document (labels) | about 1,200 in, under 400 out, no matter how long the document is |
+| Ask | 1 per question | about 2,000-2,500 in (top 5 passages), under 600 out |
+| Ask, same question again | 0 (answer cache) | 0 |
+| Search only, chunking, OCR, local embeddings | 0 | 0 |
+
+- **Thinking disabled** on Flash models (`thinking_budget=0`). Labeling and cited answers don't need it, and thinking tokens are billed as output.
+- **Bounded input:** labeling sends a fixed-size excerpt (start, middle and end), so a 1,000-page book costs the same as a 10-page report. Answers send only the top-k retrieved passages.
+- **Capped output** on every call (`max_output_tokens`).
+- **Answer cache:** the same question over the same passages reuses the earlier answer.
+- **Hard limit:** `LLM_MAX_CALLS` (default 200 per running process). Beyond it, the app falls back to keyword labels and extractive answers instead of calling the API.
+- **No automatic retries.** A failed call (invalid key, rate limit) falls back immediately and the reason is shown, so errors never loop.
+- **Embeddings stay local** unless `EMBEDDING_PROVIDER=gemini` is set. Adding a key alone doesn't change embeddings.
+- **Visible usage:** the web sidebar and the CLI show calls and tokens used since start.
 
 ## Data model
 
@@ -169,6 +189,8 @@ All settings come from environment variables (or a `.env` file). See `.env.examp
 | `GEMINI_API_KEY` | empty | Turns on LLM labeling and written answers |
 | `GEMINI_LLM_MODEL` | `gemini-2.5-flash` | Model for labels and answers |
 | `GEMINI_EMBEDDING_MODEL` | `gemini-embedding-001` | Model for Gemini embeddings |
+| `LLM_MAX_CALLS` | `200` | Safety cap on LLM calls per running process; after it, features fall back to non-LLM mode |
+| `LLM_LABEL_CHARS` | `4000` | Size of the excerpt sent to the LLM for labeling (start, middle and end of the document) |
 | `LOCAL_EMBEDDING_MODEL` | `BAAI/bge-small-en-v1.5` | Model for local embeddings |
 | `OCR_MIN_CHARS` | `40` | Below this many text-layer characters, a PDF page is OCR'd |
 | `OCR_DPI` | `300` | Render resolution for OCR |
@@ -230,7 +252,7 @@ Each line of the JSONL export is a self-contained record:
 ## Design decisions
 
 - **OCR only where needed.** Each PDF page is checked individually, so a mostly digital document with a few scanned inserts is OCR'd only on those pages. That's faster and more accurate than OCR'ing everything.
-- **Paragraphs from geometry.** On scans, Tesseract often starts "new paragraphs" mid-sentence. Rebuilding paragraphs from vertical line gaps fixed broken chunks in the sample scans.
+- **Paragraphs from geometry.** On scans, Tesseract often starts "new paragraphs" mid-sentence, and many digital PDFs store every line as a separate block. Rebuilding paragraphs from line gaps, relative to each page's own typical spacing, fixed both. On a real double-spaced 23-page report, mid-sentence paragraph breaks went from 28 to 2 (the remaining two are list items).
 - **Paragraph-aware chunks with citations.** Splitting on raw token windows cuts sentences and mixes chapters. Chunks built from whole paragraphs, starting at chapter headings, retrieve better and cite precisely.
 - **Idempotent by content hash.** Re-running on a growing archive only processes new or changed files.
 - **Offline first, cloud optional.** The full pipeline runs with no API key. An LLM adds richer labels and written answers when a key is set, and every LLM call falls back gracefully if it fails.

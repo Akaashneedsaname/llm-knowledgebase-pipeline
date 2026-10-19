@@ -6,10 +6,14 @@ only from them and cites sources as [1], [2], ...
 Without a key: returns the most relevant passages (extractive mode).
 """
 
+import hashlib
+
 from kb import llm
 from kb.config import settings
 from kb.embed import get_embedder
 from kb.store import similarity_search
+
+_answer_cache: dict[str, dict] = {}
 
 
 def search(query: str, top_k: int = None) -> list[dict]:
@@ -47,14 +51,25 @@ def answer(query: str, top_k: int = None) -> dict:
         return {"answer": "The knowledgebase is empty. Ingest some documents first.", "mode": "none", "sources": []}
 
     if llm.enabled():
+        # Same question over the same passages -> reuse the earlier answer instead of paying again
+        key = hashlib.sha256(
+            (query.strip().lower() + "\x00" + "\x00".join(c["chunk_text"] for c in chunks)).encode()
+        ).hexdigest()
+        if key in _answer_cache:
+            return {**_answer_cache[key], "cached": True}
+
         prompt = (
             "Answer the question using ONLY the numbered passages below. Cite passages inline like [1]. "
-            "If the passages do not contain the answer, say so.\n\n"
+            "Be concise (under 150 words). If the passages do not contain the answer, say so.\n\n"
             f"PASSAGES:\n{format_context(chunks)}\n\nQUESTION: {query}\n\nANSWER:"
         )
-        text = llm.generate(prompt)
+        text = llm.generate(prompt, max_output_tokens=600)
         if text:
-            return {"answer": text.strip(), "mode": "llm", "sources": sources}
+            result = {"answer": text.strip(), "mode": "llm", "sources": sources}
+            if len(_answer_cache) >= 256:
+                _answer_cache.pop(next(iter(_answer_cache)))  # drop the oldest
+            _answer_cache[key] = result
+            return result
 
     best = chunks[0]["chunk_text"]
     excerpt = best if len(best) <= 900 else best[:900].rsplit(" ", 1)[0] + " ..."

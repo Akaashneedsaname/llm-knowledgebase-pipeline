@@ -136,7 +136,11 @@ with st.sidebar:
         st.success("Database connected")
     st.write(f"**Embeddings:** {settings.embedding_provider} ({settings.embedding_dim}-dim)")
     st.write(f"**AI labeling and answers:** {'on (Gemini)' if settings.llm_enabled else 'off (no Gemini key)'}")
-    st.caption("Set GEMINI_API_KEY in .env and restart to turn AI features on.")
+    if settings.llm_enabled:
+        usage_box = st.empty()  # filled at the end of the run, after any AI calls
+    else:
+        usage_box = None
+        st.caption("Set GEMINI_API_KEY in .env and restart to turn AI features on.")
 
     st.divider()
     st.header("Sample documents")
@@ -261,8 +265,16 @@ with tab_ask:
         with st.spinner("Searching and answering..."):
             result = answer(query, k)
         st.subheader("Answer")
+        if result.get("cached"):
+            st.caption("Answered from cache: same question over the same passages, so no new AI call was made.")
         if result["mode"] == "extractive":
-            st.caption("AI answers are off, so this shows the most relevant passage. Add a Gemini key to get written answers.")
+            from kb import llm as llm_module
+            if not settings.llm_enabled:
+                st.caption("AI answers are off, so this shows the most relevant passage. "
+                           "Add a Gemini key to get written answers.")
+            else:
+                st.warning("The AI call didn't succeed, so this shows the most relevant passage instead. "
+                           f"Reason: {llm_module.last_error or 'the AI call limit was reached'}")
         st.markdown(result["answer"])
         st.subheader("Sources")
         for s in result["sources"]:
@@ -297,3 +309,13 @@ with tab_export:
                            mime="application/jsonl")
         st.write("**Preview**")
         st.json(preview, expanded=False)
+
+# ---------------------------------------------------------------- AI usage (sidebar)
+if usage_box is not None:
+    from kb.llm import usage_summary
+    u = usage_summary()
+    usage_box.info(
+        f"**AI usage since start:** {u['calls']} calls, {u['total_tokens']:,} tokens "
+        f"(limit {settings.llm_max_calls} calls)"
+        + (f"\n\n{u['blocked']} calls blocked by the limit." if u["blocked"] else "")
+    )

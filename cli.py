@@ -32,6 +32,14 @@ def collect_files(paths: list[str]) -> list[Path]:
     return files
 
 
+def print_llm_usage():
+    if settings.llm_enabled:
+        from kb.llm import usage_summary
+        u = usage_summary()
+        print(f"\nAI usage: {u['calls']} calls, {u['total_tokens']:,} tokens"
+              + (f", {u['blocked']} blocked by LLM_MAX_CALLS" if u["blocked"] else ""))
+
+
 def cmd_init_db(args):
     from kb.store import init_database
     init_database()
@@ -65,6 +73,7 @@ def cmd_ingest(args):
           f"{sum(1 for r in reports if r['status'].startswith('skipped'))} skipped, "
           f"{sum(1 for r in reports if r['status'].startswith('failed'))} failed, "
           f"{sum(r['chunks'] for r in ingested)} chunks")
+    print_llm_usage()
 
 
 def cmd_stats(args):
@@ -93,6 +102,7 @@ def cmd_ask(args):
     print(f"\n{result['answer']}\n\nSources ({result['mode']} mode):")
     for s in result["sources"]:
         print(f"  {s['ref']}  (similarity {s['similarity']})")
+    print_llm_usage()
 
 
 def cmd_export(args):
